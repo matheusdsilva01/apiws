@@ -37,21 +37,17 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	go handleConnection(conn, id)
 }
 
-func closeConn(conn *websocket.Conn, id string) {
-	conn.Close()
+func closeConnectionsInRoom(id string) {
 	room := rooms[id]
-	if _, ok := room.Clients[conn]; ok {
-		delete(room.Clients, conn)
-		if len(room.Clients) == 0 {
-			fmt.Printf("Removing empty room %s\n", room.Name)
-			delete(rooms, id)
-			fmt.Printf("Current rooms after removal: %v\n", rooms)
-		}
+	for client := range room.Clients {
+		client.Close()
 	}
+	delete(rooms, id)
+	fmt.Printf("Current rooms after removal: %v\n", rooms)
 }
 
 func handleConnection(conn *websocket.Conn, id string) {
-	defer closeConn(conn, id)
+	defer closeConnectionsInRoom(id)
 
 	currRoom, alreadyExists := rooms[id]
 
@@ -81,6 +77,7 @@ func handleConnection(conn *websocket.Conn, id string) {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
 			fmt.Println("Error reading message:", err)
+			break
 		}
 
 		fmt.Printf("Received: %s\n", message)
@@ -90,6 +87,7 @@ func handleConnection(conn *websocket.Conn, id string) {
 				fmt.Printf("Sending message to client %p\n", client.RemoteAddr())
 				if err = client.WriteMessage(websocket.TextMessage, message); err != nil {
 					fmt.Printf("Error sending message to client %p: %v\n", client.RemoteAddr(), err)
+					break
 				}
 			}
 		}
@@ -105,5 +103,6 @@ func main() {
 	err := http.ListenAndServe("localhost:8080", nil)
 	if err != nil {
 		fmt.Println("Error starting server:", err)
+		return
 	}
 }
