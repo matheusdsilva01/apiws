@@ -104,7 +104,7 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"Hello": "World"})
 	})
-	err := http.ListenAndServe("localhost:8080", nil)
+	err := http.ListenAndServe(":8080", nil)
 	if err != nil {
 		fmt.Println("Error starting server:", err)
 		return
