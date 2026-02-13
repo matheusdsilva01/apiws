@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/gorilla/websocket"
 )
@@ -98,13 +99,17 @@ func handleConnection(conn *websocket.Conn, id string) {
 func main() {
 	fmt.Println("Running...")
 	http.HandleFunc("/ws", wsHandler)
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8081"
+	}
 
-	fmt.Println("WebSocket server started on http://localhost:8080/ws")
+	fmt.Printf("WebSocket server started on http://localhost:%s/ws\n", port)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"Hello": "World"})
 	})
-	err := http.ListenAndServe(":8080", nil)
+	err := http.ListenAndServe(":"+port, nil)
 	if err != nil {
 		fmt.Println("Error starting server:", err)
 		return
