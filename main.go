@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -99,7 +100,10 @@ func main() {
 	http.HandleFunc("/ws", wsHandler)
 
 	fmt.Println("WebSocket server started on http://localhost:8080/ws")
-
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"Hello": "World"})
+	})
 	err := http.ListenAndServe("localhost:8080", nil)
 	if err != nil {
 		fmt.Println("Error starting server:", err)
