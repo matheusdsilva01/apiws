@@ -12,6 +12,7 @@ FROM alpine:latest
 RUN apk --no-cache add ca-certificates
 WORKDIR /root/
 ENV PORT=80
+ENV ALLOWED_ORIGINS=https://super-tic-tac-toe-beta.vercel.app
 
 COPY --from=builder /app/main .
 

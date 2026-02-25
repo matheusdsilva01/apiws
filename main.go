@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/gorilla/websocket"
 )
@@ -16,11 +17,51 @@ type Room struct {
 
 var rooms = make(map[string]Room)
 
+func getAllowedOrigins() []string {
+	origins := os.Getenv("ALLOWED_ORIGINS")
+	if origins == "" {
+		return []string{"*"}
+	}
+	return strings.Split(origins, ",")
+}
+
+func isOriginAllowed(origin string) bool {
+	allowed := getAllowedOrigins()
+	for _, o := range allowed {
+		o = strings.TrimSpace(o)
+		if o == "*" || strings.EqualFold(o, origin) {
+			return true
+		}
+	}
+	return false
+}
+
+func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" && isOriginAllowed(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		} else if len(getAllowedOrigins()) == 1 && getAllowedOrigins()[0] == "*" {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next(w, r)
+	}
+}
+
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true
+		return isOriginAllowed(r.Header.Get("Origin"))
 	},
 }
 
@@ -98,17 +139,18 @@ func handleConnection(conn *websocket.Conn, id string) {
 
 func main() {
 	fmt.Println("Running...")
-	http.HandleFunc("/ws", wsHandler)
+	http.HandleFunc("/ws", corsMiddleware(wsHandler))
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8081"
+		port = "8080"
 	}
 
+	fmt.Printf("Allowed origins: %v\n", getAllowedOrigins())
 	fmt.Printf("WebSocket server started on http://localhost:%s/ws\n", port)
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"Hello": "World"})
-	})
+	}))
 	err := http.ListenAndServe(":"+port, nil)
 	if err != nil {
 		fmt.Println("Error starting server:", err)
