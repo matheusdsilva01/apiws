@@ -1,0 +1,118 @@
+name: Deploy to Azure
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: azure-production
+  cancel-in-progress: false
+
+env:
+  ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS }}
+  AZURE_ACR_NAME: ${{ vars.AZURE_ACR_NAME }}
+  AZURE_CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+
+      - name: Validate deployment configuration
+        run: |
+          : "${AZURE_ACR_NAME:?Set the AZURE_ACR_NAME repository variable}"
+          : "${AZURE_CONTAINER_APP_NAME:?Set the AZURE_CONTAINER_APP_NAME repository variable}"
+          : "${AZURE_RESOURCE_GROUP:?Set the AZURE_RESOURCE_GROUP repository variable}"
+          : "${ALLOWED_ORIGINS:?Set the ALLOWED_ORIGINS repository variable}"
+
+          if [[ "$ALLOWED_ORIGINS" =~ [[:space:]] ]]; then
+            echo "ALLOWED_ORIGINS must be comma-separated without whitespace"
+            exit 1
+          fi
+          if [[ "$ALLOWED_ORIGINS" == ,* || "$ALLOWED_ORIGINS" == *, || "$ALLOWED_ORIGINS" == *,,* ]]; then
+            echo "ALLOWED_ORIGINS must not contain empty entries"
+            exit 1
+          fi
+
+          IFS=',' read -ra origins <<< "$ALLOWED_ORIGINS"
+          for origin in "${origins[@]}"; do
+            if [[ -z "$origin" || "$origin" == "*" ]]; then
+              echo "ALLOWED_ORIGINS must contain only explicit production origins"
+              exit 1
+            fi
+          done
+
+      - name: Log in to Azure with OIDC
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Validate provisioned Azure resources
+        run: |
+          az extension add --name containerapp --upgrade --output none
+          az acr show --name "$AZURE_ACR_NAME" --output none
+          az containerapp show \
+            --name "$AZURE_CONTAINER_APP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --output none
+
+          registry_identity="$(az containerapp show \
+            --name "$AZURE_CONTAINER_APP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "properties.configuration.registries[?server=='${AZURE_ACR_NAME}.azurecr.io'].identity | [0]" \
+            --output tsv)"
+          if [[ -z "$registry_identity" || "$registry_identity" == "null" ]]; then
+            echo "Container App must use a managed identity with AcrPull for ${AZURE_ACR_NAME}.azurecr.io"
+            exit 1
+          fi
+
+          az containerapp revision set-mode \
+            --name "$AZURE_CONTAINER_APP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --mode single \
+            --output none
+
+      - name: Build and deploy
+        uses: azure/container-apps-deploy-action@8dff69dac3367c32ceb2690d8f13adbeab462703 # v2
+        with:
+          appSourcePath: ${{ github.workspace }}
+          acrName: ${{ env.AZURE_ACR_NAME }}
+          imageToBuild: ${{ env.AZURE_ACR_NAME }}.azurecr.io/apiws:${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          containerAppName: ${{ env.AZURE_CONTAINER_APP_NAME }}
+          resourceGroup: ${{ env.AZURE_RESOURCE_GROUP }}
+          ingress: external
+          targetPort: 80
+          environmentVariables: PORT=80 ALLOWED_ORIGINS=${{ env.ALLOWED_ORIGINS }}
+          disableTelemetry: true
+
+      - name: Keep one steady-state replica
+        run: |
+          az containerapp update \
+            --name "$AZURE_CONTAINER_APP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --min-replicas 1 \
+            --max-replicas 1 \
+            --output none
