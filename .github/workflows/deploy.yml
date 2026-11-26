@@ -104,8 +104,8 @@ jobs:
           containerAppName: ${{ env.AZURE_CONTAINER_APP_NAME }}
           resourceGroup: ${{ env.AZURE_RESOURCE_GROUP }}
           ingress: external
-          targetPort: 80
-          environmentVariables: PORT=80 ALLOWED_ORIGINS=${{ env.ALLOWED_ORIGINS }}
+          targetPort: 8080
+          environmentVariables: PORT=8080 ALLOWED_ORIGINS=${{ env.ALLOWED_ORIGINS }}
           disableTelemetry: true
 
       - name: Keep one steady-state replica
